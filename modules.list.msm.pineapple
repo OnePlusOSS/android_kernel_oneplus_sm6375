@@ -100,3 +100,4 @@ sdhci-msm.ko
 cqhci.ko
 crm.ko
 bcl_pmic5.ko
+oplus_bsp_mm_osvelte.ko

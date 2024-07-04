@@ -12,6 +12,9 @@
 #include <linux/dmapool.h>
 #include <linux/pm_runtime.h>
 #include <linux/ratelimit.h>
+#ifdef OPLUS_FEATURE_CHG_BASIC
+#include <linux/iio/consumer.h>
+#endif
 #include <linux/interrupt.h>
 #include <linux/iommu.h>
 #include <linux/ioport.h>
@@ -240,6 +243,14 @@ enum dbm_reg {
 	DBM_DATA_FIFO_ADDR_EN,
 	DBM_DATA_FIFO_SIZE_EN,
 };
+
+#ifdef OPLUS_FEATURE_CHG_BASIC
+enum charger_detection_type {
+	REMOTE_PROC,
+	IIO,
+	PSY,
+};
+#endif
 
 struct dbm_reg_data {
 	u32 offset;
@@ -549,6 +560,11 @@ struct dwc3_msm {
 	enum bus_vote		default_bus_vote;
 	enum bus_vote		override_bus_vote;
 	struct icc_path		*icc_paths[3];
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	struct power_supply	*usb_psy;
+	struct iio_channel	*chg_type;
+	enum charger_detection_type apsd_source;
+#endif
 	bool			in_host_mode;
 	bool			in_device_mode;
 	enum usb_device_speed	max_rh_port_speed;
@@ -643,6 +659,9 @@ struct dwc3_msm {
 	u32			qos_rec_irq[PM_QOS_REC_MAX_RECORD];
 
 	int			repeater_rev;
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	bool		force_disconnect;
+#endif
 };
 
 #define USB_HSPHY_3P3_VOL_MIN		3050000 /* uV */
@@ -3293,6 +3312,43 @@ static void mdwc3_update_u1u2_value(struct dwc3 *dwc)
 		dwc->dis_u2_entry_quirk ? "disabled" : "enabled");
 }
 
+#ifdef OPLUS_FEATURE_CHG_BASIC
+static void dwc3_handle_connect_event(struct dwc3 *dwc)
+{
+	struct dwc3_msm *mdwc = dev_get_drvdata(dwc->dev->parent);
+	u32 reg;
+
+	if ((dwc->speed != DWC3_DSTS_SUPERSPEED) &&
+		(dwc->speed != DWC3_DSTS_SUPERSPEED_PLUS)) {
+		reg = dwc3_msm_read_reg(mdwc->base, DWC3_GUSB3PIPECTL(0));
+		reg |= DWC3_GUSB3PIPECTL_SUSPHY;
+		dwc3_msm_write_reg(mdwc->base, DWC3_GUSB3PIPECTL(0), reg);
+	}
+
+	/*
+	* SW WA for CV9 RESET DEVICE TEST(TD 9.23) compliance failure.
+	* Visit eUSB2 phy driver for more details.
+	*/
+	WARN_ON(mdwc->hs_phy->flags & PHY_HOST_MODE);
+	if (mdwc->use_eusb2_phy &&
+		(dwc->gadget->speed >= USB_SPEED_SUPER)) {
+		usb_phy_notify_connect(mdwc->hs_phy, dwc->gadget->speed);
+		udelay(20);
+		/* Perform usb2 phy soft reset as given workaround */
+		mdwc3_usb2_phy_soft_reset(mdwc);
+	}
+
+	/*
+	* Add power event if the dbm indicates coming out of L1 by
+	* interrupt
+	*/
+	if (!mdwc->dbm_is_1p4)
+		dwc3_msm_write_reg_field(mdwc->base,
+		PWR_EVNT_IRQ_MASK_REG,
+		PWR_EVNT_LPM_OUT_L1_MASK, 1);
+}
+#endif
+
 static void handle_gsi_buffer_setup_event(struct dwc3 *dwc)
 {
 	struct dwc3_msm *mdwc = dev_get_drvdata(dwc->dev->parent);
@@ -3444,40 +3500,9 @@ void dwc3_msm_notify_event(struct dwc3 *dwc,
 		break;
 	case DWC3_CONTROLLER_CONNDONE_EVENT:
 		dev_dbg(mdwc->dev, "DWC3_CONTROLLER_CONNDONE_EVENT received\n");
-
-		/*
-		 * SW WA for CV9 RESET DEVICE TEST(TD 9.23) compliance failure.
-		 * Visit eUSB2 phy driver for more details.
-		 */
-		WARN_ON(mdwc->hs_phy->flags & PHY_HOST_MODE);
-		if (mdwc->use_eusb2_phy &&
-				(dwc->gadget->speed >= USB_SPEED_SUPER)) {
-			usb_phy_notify_connect(mdwc->hs_phy, dwc->gadget->speed);
-
-			/*
-			 * Certain USB repeater HW revisions will have a fix on
-			 * silicon.  Limit the controller PHY soft reset to the
-			 * version which requires it.
-			 */
-			if (mdwc->repeater_rev == USB_REPEATER_V1) {
-				udelay(20);
-				/*
-				 * Perform usb2 phy soft reset as given
-				 * workaround
-				 */
-				mdwc3_usb2_phy_soft_reset(mdwc);
-			}
-		}
-
-		/*
-		 * Add power event if the dbm indicates coming out of L1 by
-		 * interrupt
-		 */
-		if (!mdwc->dbm_is_1p4)
-			dwc3_msm_write_reg_field(mdwc->base,
-					PWR_EVNT_IRQ_MASK_REG,
-					PWR_EVNT_LPM_OUT_L1_MASK, 1);
-
+#ifdef OPLUS_FEATURE_CHG_BASIC
+		dwc3_handle_connect_event(dwc);
+#endif
 		atomic_set(&mdwc->in_lpm, 0);
 		mdwc3_update_u1u2_value(dwc);
 		set_bit(CONN_DONE, &mdwc->inputs);
@@ -3520,6 +3545,16 @@ void dwc3_msm_notify_event(struct dwc3 *dwc,
 		break;
 	case DWC3_CONTROLLER_NOTIFY_CLEAR_DB:
 		dev_dbg(mdwc->dev, "DWC3_CONTROLLER_NOTIFY_CLEAR_DB\n");
+#ifdef OPLUS_FEATURE_CHG_BASIC
+		/*
+		* Clear the susphy bit here to ensure it is not set during
+		* the course of controller initialisation process.
+		*/
+		reg = dwc3_msm_read_reg(mdwc->base, DWC3_GUSB3PIPECTL(0));
+		reg &= ~(DWC3_GUSB3PIPECTL_SUSPHY);
+		dwc3_msm_write_reg(mdwc->base, DWC3_GUSB3PIPECTL(0), reg);
+		udelay(1000);
+#endif
 		handle_gsi_clear_db(dwc);
 		break;
 	case DWC3_IMEM_UPDATE_PID:
@@ -4712,6 +4747,9 @@ static irqreturn_t msm_dwc3_pwr_irq(int irq, void *data)
 }
 
 static void dwc3_otg_sm_work(struct work_struct *w);
+#ifdef OPLUS_FEATURE_CHG_BASIC
+static int get_chg_type(struct dwc3_msm *mdwc);
+#endif
 
 static int dwc3_msm_get_clk_gdsc(struct dwc3_msm *mdwc)
 {
@@ -4864,6 +4902,9 @@ static int dwc3_msm_vbus_notifier(struct notifier_block *nb,
 	struct extcon_nb *enb = container_of(nb, struct extcon_nb, vbus_nb);
 	struct dwc3_msm *mdwc = enb->mdwc;
 	const char *edev_name;
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	bool is_cdp;
+#endif
 
 	if (!edev || !mdwc)
 		return NOTIFY_DONE;
@@ -4909,6 +4950,27 @@ static int dwc3_msm_vbus_notifier(struct notifier_block *nb,
 			return NOTIFY_DONE;
 		mdwc->vbus_active = event;
 	}
+
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	/*
+	 * In case of ADSP based charger detection driving a pulse on
+	 * DP to ensure proper CDP detection will be taken care by
+	 * ADSP.
+	 */
+	is_cdp = ((mdwc->apsd_source == IIO) &&
+		(get_chg_type(mdwc) == POWER_SUPPLY_TYPE_USB_CDP)) ||
+		((mdwc->apsd_source == PSY) &&
+		(get_chg_type(mdwc) == POWER_SUPPLY_USB_TYPE_CDP));
+
+	/*
+	 * Drive a pulse on DP to ensure proper CDP detection
+	 * and only when the vbus connect event is a valid one.
+	 */
+	if (is_cdp && mdwc->vbus_active && !mdwc->check_eud_state) {
+		dev_dbg(mdwc->dev, "Connected to CDP, pull DP up\n");
+		mdwc->hs_phy->charger_detect(mdwc->hs_phy);
+	}
+#endif
 
 	mdwc->ext_idx = enb->idx;
 	if (mdwc->dr_mode == USB_DR_MODE_OTG && !mdwc->in_restart)
@@ -5068,6 +5130,10 @@ static int dwc3_msm_set_role(struct dwc3_msm *mdwc, enum usb_role role)
 
 	dbg_log_string("cur_role:%s new_role:%s refcnt:%d\n", dwc3_msm_usb_role_string(cur_role),
 				dwc3_msm_usb_role_string(role), mdwc->refcnt_dp_usb);
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	dev_err(mdwc->dev, "cur_role:%s new_role:%s refcnt:%d\n", dwc3_msm_usb_role_string(cur_role),
+				dwc3_msm_usb_role_string(role), mdwc->refcnt_dp_usb);
+#endif
 
 	/*
 	 * For boot up without USB cable connected case, don't check
@@ -6313,6 +6379,16 @@ static int dwc3_msm_probe(struct platform_device *pdev)
 		}
 	}
 
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	/* Check charger detection type to obtain charger type */
+	if (of_get_property(mdwc->dev->of_node, "io-channel-names", NULL))
+		mdwc->apsd_source = IIO;
+	else if (of_get_property(mdwc->dev->of_node, "usb-role-switch", NULL))
+		mdwc->apsd_source = REMOTE_PROC;
+	else
+		mdwc->apsd_source = PSY;
+#endif
+
 	if (of_property_read_bool(node, "extcon")) {
 		ret = dwc3_msm_extcon_register(mdwc);
 		if (ret)
@@ -6376,6 +6452,9 @@ static int dwc3_msm_probe(struct platform_device *pdev)
 		dwc3_ext_event_notify(mdwc);
 	}
 
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	mdwc->force_disconnect = false;
+#endif
 	return 0;
 
 put_dwc3:
@@ -6752,6 +6831,10 @@ static int dwc3_otg_start_host(struct dwc3_msm *mdwc, int on)
 	int ret = 0;
 	struct dwc3 *dwc = platform_get_drvdata(mdwc->dwc3);
 
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	dev_err(mdwc->dev, "%s: turn %s host\n", __func__, on ? "on" : "off");
+#endif
+
 	if (on) {
 		dev_dbg(mdwc->dev, "%s: turn on host\n", __func__);
 		mdwc->hs_phy->flags |= PHY_HOST_MODE;
@@ -6902,6 +6985,52 @@ static int dwc3_otg_start_host(struct dwc3_msm *mdwc, int on)
 	return 0;
 }
 
+#ifdef OPLUS_FEATURE_CHG_BASIC
+static int get_chg_type(struct dwc3_msm *mdwc)
+{
+	int ret, value = 0;
+	union power_supply_propval pval = {0};
+
+	switch (mdwc->apsd_source) {
+	case IIO:
+		if (!mdwc->chg_type) {
+			mdwc->chg_type = devm_iio_channel_get(mdwc->dev,
+						"chg_type");
+			if (IS_ERR_OR_NULL(mdwc->chg_type)) {
+				dev_dbg(mdwc->dev,
+					"unable to get iio channel\n");
+				mdwc->chg_type = NULL;
+				return -ENODEV;
+			}
+		}
+
+		ret = iio_read_channel_processed(mdwc->chg_type, &value);
+		if (ret < 0) {
+			dev_err(mdwc->dev, "failed to get charger type\n");
+			return ret;
+		}
+		break;
+	case PSY:
+		if (!mdwc->usb_psy) {
+			mdwc->usb_psy = power_supply_get_by_name("usb");
+			if (!mdwc->usb_psy) {
+				dev_err(mdwc->dev, "Could not get usb psy\n");
+				return -ENODEV;
+			}
+		}
+
+		power_supply_get_property(mdwc->usb_psy,
+				POWER_SUPPLY_PROP_USB_TYPE, &pval);
+		value = pval.intval;
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	return value;
+}
+#endif
+
 static void dwc3_override_vbus_status(struct dwc3_msm *mdwc, bool vbus_present)
 {
 	/* Update OTG VBUS Valid from HSPHY to controller */
@@ -6931,6 +7060,9 @@ static void dwc3_override_vbus_status(struct dwc3_msm *mdwc, bool vbus_present)
 static int dwc3_otg_start_peripheral(struct dwc3_msm *mdwc, int on)
 {
 	struct dwc3 *dwc = platform_get_drvdata(mdwc->dwc3);
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	unsigned long flags;
+#endif
 	int timeout = 100;
 	int ret;
 
@@ -6942,6 +7074,10 @@ static int dwc3_otg_start_peripheral(struct dwc3_msm *mdwc, int on)
 	}
 	dbg_event(0xFF, "StrtGdgt gsync",
 		atomic_read(&mdwc->dev->power.usage_count));
+
+#ifdef OPLUS_FEATURE_CHG_BASIC
+	dev_err(mdwc->dev, "%s: turn %s gadget\n", __func__, on ? "on" : "off");
+#endif
 
 	if (on) {
 		dev_dbg(mdwc->dev, "%s: turn on gadget\n", __func__);
@@ -6995,6 +7131,21 @@ static int dwc3_otg_start_peripheral(struct dwc3_msm *mdwc, int on)
 
 		usb_role_switch_set_role(mdwc->dwc3_drd_sw, USB_ROLE_DEVICE);
 		clk_set_rate(mdwc->core_clk, mdwc->core_clk_rate);
+#ifdef OPLUS_FEATURE_CHG_BASIC
+		/*
+		 * Check udc->driver to find out if we are bound to udc or not.
+		 */
+		spin_lock_irqsave(&dwc->lock, flags);
+		if ((mdwc->force_disconnect) && (dwc->gadget_driver) &&
+			(!dwc->softconnect)) {
+			spin_unlock_irqrestore(&dwc->lock, flags);
+			dbg_event(0xFF, "Force Pullup", 0);
+			usb_gadget_connect(dwc->gadget);
+			spin_lock_irqsave(&dwc->lock, flags);
+		}
+		spin_unlock_irqrestore(&dwc->lock, flags);
+		mdwc->force_disconnect = false;
+#endif
 	} else {
 		dev_dbg(mdwc->dev, "%s: turn off gadget\n", __func__);
 
@@ -7024,6 +7175,21 @@ static int dwc3_otg_start_peripheral(struct dwc3_msm *mdwc, int on)
 			dbg_event(0xFF, "StopGdgt connected", dwc->connected);
 			pm_runtime_suspend(&mdwc->dwc3->dev);
 		}
+
+#ifdef OPLUS_FEATURE_CHG_BASIC
+		if ((timeout == 0) && (dwc->connected)) {
+			dbg_event(0xFF, "Force Pulldown", 0);
+
+			/*
+			 * Since we are not taking the udc_lock, there is a
+			 * chance that this might race with gadget_remove driver
+			 * in case this is called in parallel to UDC getting
+			 * cleared in userspace
+			 */
+			usb_gadget_disconnect(dwc->gadget);
+			mdwc->force_disconnect = true;
+		}
+#endif
 
 		/* wait for LPM, to ensure h/w is reset after stop_peripheral */
 		set_bit(WAIT_FOR_LPM, &mdwc->inputs);
@@ -7063,7 +7229,11 @@ static void dwc3_otg_sm_work(struct work_struct *w)
 	}
 
 	state = dwc3_drd_state_string(mdwc->drd_state);
+#ifndef OPLUS_FEATURE_CHG_BASIC
 	dev_dbg(mdwc->dev, "%s state\n", state);
+#else
+	dev_err(mdwc->dev, "%s state\n", state);
+#endif
 	dbg_event(0xFF, state, 0);
 
 	/* Check OTG state */

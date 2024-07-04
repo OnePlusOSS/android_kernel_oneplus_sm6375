@@ -603,11 +603,10 @@ TRACE_EVENT(core_ctl_notif_data,
 		memcpy(__entry->cur_cap, cur_cap, MAX_CLUSTERS * sizeof(u32));
 	),
 
-	TP_printk("nr_big=%u ta_load=%u ta_util=(%u %u %u) cur_cap=(%u %u %u)",
+	TP_printk("nr_big=%u ta_load=%u ta_util=(%u %u) cur_cap=(%u %u)",
 		  __entry->nr_big, __entry->ta_load,
 		  __entry->ta_util[0], __entry->ta_util[1],
-		  __entry->ta_util[2], __entry->cur_cap[0],
-		  __entry->cur_cap[1], __entry->cur_cap[2])
+		  __entry->cur_cap[0], __entry->cur_cap[1])
 );
 
 TRACE_EVENT(core_ctl_sbt,
@@ -758,6 +757,66 @@ TRACE_EVENT(waltgov_util_update,
 		      __entry->max_cap, __entry->nl,
 		      __entry->pl, __entry->rtgb, __entry->flags)
 );
+
+#ifdef CONFIG_OPLUS_FEATURE_SUGOV_TL
+TRACE_EVENT(waltgov_next_freq_tl,
+	    TP_PROTO(unsigned int cpu, unsigned long util, unsigned long max,
+		     unsigned int freq, unsigned int laf, unsigned int prev_freq),
+	    TP_ARGS(cpu, util, max, freq, laf, prev_freq),
+	    TP_STRUCT__entry(
+		    __field(	unsigned int,	cpu)
+		    __field(	unsigned long,	util)
+		    __field(	unsigned long,	max)
+		    __field(	unsigned int,	freq)
+		    __field(	unsigned int,	laf)
+		    __field(	unsigned int,	prev_freq)
+	    ),
+	    TP_fast_assign(
+		    __entry->cpu = cpu;
+		    __entry->util = util;
+		    __entry->max = max;
+		    __entry->freq = freq;
+		    __entry->laf = laf;
+		    __entry->prev_freq = prev_freq;
+	    ),
+	    TP_printk("cpu=%u util=%lu max=%lu freq=%u laf=%u, prev_freq=%u",
+		      __entry->cpu,
+		      __entry->util,
+		      __entry->max,
+		      __entry->freq,
+		      __entry->laf,
+		      __entry->prev_freq)
+);
+
+TRACE_EVENT(choose_freq,
+	    TP_PROTO(unsigned int freq, unsigned int prevfreq, unsigned int freqmax,
+		     unsigned int freqmin, unsigned int tl, int index),
+	    TP_ARGS(freq, prevfreq, freqmax, freqmin, tl, index),
+	    TP_STRUCT__entry(
+		    __field(unsigned int, freq)
+		    __field(unsigned int, prevfreq)
+		    __field(unsigned int, freqmax)
+		    __field(unsigned int, freqmin)
+		    __field(unsigned int, tl)
+		    __field(int, index)
+	    ),
+	    TP_fast_assign(
+		    __entry->freq = freq;
+		    __entry->prevfreq = prevfreq;
+		    __entry->freqmax = freqmax;
+		    __entry->freqmin = freqmin;
+		    __entry->tl = tl;
+		    __entry->index = index;
+	    ),
+	    TP_printk("freq=%u prevfreq=%u freqmax=%u freqmin=%u tl=%u index=%d",
+		      __entry->freq,
+		      __entry->prevfreq,
+		      __entry->freqmax,
+		      __entry->freqmin,
+		      __entry->tl,
+		      __entry->index)
+);
+#endif
 
 TRACE_EVENT(waltgov_next_freq,
 	    TP_PROTO(unsigned int cpu, unsigned long util, unsigned long max, unsigned int raw_freq,
@@ -1044,16 +1103,12 @@ TRACE_EVENT(sched_compute_energy,
 		__field(unsigned long,	best_energy)
 		__field(unsigned int,	cluster_first_cpu0)
 		__field(unsigned int,	cluster_first_cpu1)
-		__field(unsigned int,	cluster_first_cpu2)
 		__field(unsigned long,	s0)
 		__field(unsigned long,	s1)
-		__field(unsigned long,	s2)
 		__field(unsigned long,	m0)
 		__field(unsigned long,	m1)
-		__field(unsigned long,	m2)
 		__field(unsigned long,	c0)
 		__field(unsigned long,	c1)
-		__field(unsigned long,	c2)
 	),
 
 	TP_fast_assign(
@@ -1068,25 +1123,20 @@ TRACE_EVENT(sched_compute_energy,
 		__entry->best_energy		= best_energy;
 		__entry->cluster_first_cpu0	= o->cluster_first_cpu[0];
 		__entry->cluster_first_cpu1	= o->cluster_first_cpu[1];
-		__entry->cluster_first_cpu2	= o->cluster_first_cpu[2];
 		__entry->s0	= o->sum_util[0];
 		__entry->s1	= o->sum_util[1];
-		__entry->s2	= o->sum_util[2];
 		__entry->m0	= o->max_util[0];
 		__entry->m1	= o->max_util[1];
-		__entry->m2	= o->max_util[2];
 		__entry->c0	= o->cost[0];
 		__entry->c1	= o->cost[1];
-		__entry->c2	= o->cost[2];
 	),
 
-	TP_printk("pid=%d comm=%s util=%lu prev_cpu=%d prev_energy=%lu eval_cpu=%d eval_energy=%lu best_energy_cpu=%d best_energy=%lu, fcpu s m c = %u %u %u %u, %u %u %u %u, %u %u %u %u",
+	TP_printk("pid=%d comm=%s util=%lu prev_cpu=%d prev_energy=%lu eval_cpu=%d eval_energy=%lu best_energy_cpu=%d best_energy=%lu, fcpu s m c = %u %u %u %u, %u %u %u %u",
 		__entry->pid, __entry->comm, __entry->util, __entry->prev_cpu,
 		__entry->prev_energy, __entry->eval_cpu, __entry->eval_energy,
 		__entry->best_energy_cpu, __entry->best_energy,
 		__entry->cluster_first_cpu0, __entry->s0, __entry->m0, __entry->c0,
-		__entry->cluster_first_cpu1, __entry->s1, __entry->m1, __entry->c1,
-		__entry->cluster_first_cpu2, __entry->s2, __entry->m2, __entry->c2)
+		__entry->cluster_first_cpu1, __entry->s1, __entry->m1, __entry->c1)
 )
 
 TRACE_EVENT(sched_select_task_rt,
@@ -1608,8 +1658,6 @@ TRACE_EVENT(sched_fmax_uncap,
 		__field(u64, uncap_ts)
 		__field(unsigned int, fmax_cap_0)
 		__field(unsigned int, fmax_cap_1)
-		__field(unsigned int, fmax_cap_2)
-		__field(unsigned int, fmax_cap_3)
 	),
 
 	TP_fast_assign(
@@ -1620,18 +1668,14 @@ TRACE_EVENT(sched_fmax_uncap,
 		__entry->uncap_ts = fmax_uncap_timestamp;
 		__entry->fmax_cap_0 = sysctl_fmax_cap[0];
 		__entry->fmax_cap_1 = sysctl_fmax_cap[1];
-		__entry->fmax_cap_2 = sysctl_fmax_cap[2];
-		__entry->fmax_cap_3 = sysctl_fmax_cap[3];
 	),
 
-	TP_printk("nr_big=%d ws=%llu wakeup_ctr_sum=%u load_detected=%d uncap_ts=%llu fmax_cap_0=%u fmax_cap_1=%u fmax_cap_2=%u fmax_cap_3=%u",
+	TP_printk("nr_big=%d ws=%llu wakeup_ctr_sum=%u load_detected=%d uncap_ts=%llu fmax_cap_0=%u fmax_cap_1=%u",
 			__entry->nr_big, __entry->ws,
 			__entry->wakeup_ctr_sum, __entry->load_detected,
 			__entry->uncap_ts,
 			__entry->fmax_cap_0,
-			__entry->fmax_cap_1,
-			__entry->fmax_cap_2,
-			__entry->fmax_cap_3)
+			__entry->fmax_cap_1)
 );
 
 TRACE_EVENT(sched_update_updown_migrate_values,

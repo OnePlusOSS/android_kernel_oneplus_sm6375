@@ -104,6 +104,19 @@ struct restart_work {
  * @rproc:		Remoteproc phandler to the subsystem.
  * @rwp:		The work_struct to handle shm check fail.
  */
+enum {
+	SHM_STATE_DEFAULT = 0,
+	SHM_STATE_CHECKING,
+};
+
+struct restart_work {
+	struct delayed_work dwork;
+	struct hma_info *hmap;
+	bool connected;
+	u32 sq_node;
+	u32 sq_port;
+};
+
 struct hma_info {
 	struct list_head list;
 	char subsys_name[SUBSYS_NAME_LEN];
@@ -124,6 +137,8 @@ static void shm_svc_restart_worker(struct work_struct *work);
 
 static DEFINE_MUTEX(hma_info_list_lock);
 static LIST_HEAD(hma_info_list);
+
+
 
 /**
  * restart_notifier_cb() - Callback to handle SSR events
@@ -179,7 +194,7 @@ static void shm_svc_restart_worker(struct work_struct *work)
 
 	if (atomic_read(&tmp_hma_info->check_state) != SHM_STATE_CHECKING) {
 		SHM_INFO_LOG("%s: %s restart worker unexpected\n",
-			 __func__, tmp_hma_info->subsys_name);
+			__func__, tmp_hma_info->subsys_name);
 		return;
 	}
 
@@ -404,6 +419,16 @@ static void shm_chk_comp_req_handler(struct qmi_handle *qmi, struct sockaddr_qrt
 				SHM_INFO_LOG("%s: %s Health Check Unexpected.\n",
 					 __func__, tmp_hma_info->subsys_name);
 			}
+			if (atomic_cmpxchg(&tmp_hma_info->check_state,
+				SHM_STATE_CHECKING, SHM_STATE_DEFAULT)) {
+				SHM_INFO_LOG("%s: %s Health Check Success\n",
+					__func__, tmp_hma_info->subsys_name);
+				cancel_delayed_work_sync(&rwp->dwork);
+			} else {
+				SHM_INFO_LOG("%s: %s Health Check Unexpected.\n",
+					__func__, tmp_hma_info->subsys_name);
+			}
+>>>>>>> origin/u/feature_all_other_sm6375_camry_fc_kernel_debug_20231113
 		} else {
 			SHM_INFO_LOG("%s: %s Health Check Failure\n",
 				 __func__, tmp_hma_info->subsys_name);

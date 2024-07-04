@@ -746,8 +746,11 @@ static irqreturn_t tsens_tm_zeroc_irq_thread(int irq, void *data)
 
 	TSENS_DBG(tm, "Tsens ZeroC status: %d set_t:%d reset_t:%d\n",
 		status, set_thr, reset_thr);
-	thermal_zone_device_update(tm->zeroc.tzd,
+
+    if (!(IS_ERR(tm->zeroc.tzd))) {
+		thermal_zone_device_update(tm->zeroc.tzd,
 				THERMAL_EVENT_UNSPECIFIED);
+	}
 	return IRQ_HANDLED;
 }
 

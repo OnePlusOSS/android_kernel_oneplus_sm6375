@@ -60,8 +60,7 @@ enum event_idx {
 
 enum cpu_clusters {
 	MIN = 0,
-	MID = 1,
-	MAX = 2,
+	MAX = 1,
 	CLUSTER_MAX
 };
 
@@ -572,8 +571,8 @@ static ssize_t show_top_load_cluster(struct kobject *kobj,
 				 struct kobj_attribute *attr,
 				 char *buf)
 {
-	return scnprintf(buf, PAGE_SIZE, "%u %u %u\n",
-					top_load[MIN], top_load[MID],
+	return scnprintf(buf, PAGE_SIZE, "%u %u\n",
+					top_load[MIN],
 					top_load[MAX]);
 }
 
@@ -584,8 +583,8 @@ static ssize_t show_curr_cap_cluster(struct kobject *kobj,
 				 struct kobj_attribute *attr,
 				 char *buf)
 {
-	return scnprintf(buf, PAGE_SIZE, "%u %u %u\n",
-					curr_cap[MIN], curr_cap[MID],
+	return scnprintf(buf, PAGE_SIZE, "%u %u\n",
+					curr_cap[MIN],
 					curr_cap[MAX]);
 }
 

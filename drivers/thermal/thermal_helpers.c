@@ -114,6 +114,9 @@ int thermal_zone_get_temp(struct thermal_zone_device *tz, int *temp)
 {
 	int ret;
 
+	if (!tz || IS_ERR(tz))
+		return -EINVAL;
+
 	mutex_lock(&tz->lock);
 
 	if (device_is_registered(&tz->device))

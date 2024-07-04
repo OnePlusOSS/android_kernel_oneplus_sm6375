@@ -116,7 +116,6 @@ DECLARE_RESTRICTED_HOOK(android_rvh_ctl_dirty_rate,
 DECLARE_HOOK(android_vh_madvise_cold_pageout_skip,
 	TP_PROTO(struct vm_area_struct *vma, struct page *page, bool pageout, bool *need_skip),
 	TP_ARGS(vma, page, pageout, need_skip));
-
 DECLARE_HOOK(android_vh_mm_compaction_begin,
 	TP_PROTO(struct compact_control *cc, long *vendor_ret),
 	TP_ARGS(cc, vendor_ret));
@@ -182,7 +181,9 @@ DECLARE_HOOK(android_vh_look_around,
 	TP_PROTO(struct page_vma_mapped_walk *pvmw, struct folio *folio,
 		struct vm_area_struct *vma, int *referenced),
 	TP_ARGS(pvmw, folio, vma, referenced));
-
+DECLARE_HOOK(android_vh_adjust_kvmalloc_flags,
+	TP_PROTO(unsigned int order, gfp_t *alloc_flags),
+	TP_ARGS(order, alloc_flags));
 DECLARE_HOOK(android_vh_mm_alloc_pages_direct_reclaim_enter,
 	TP_PROTO(unsigned int order),
 	TP_ARGS(order));
@@ -193,9 +194,6 @@ struct oom_control;
 DECLARE_HOOK(android_vh_mm_alloc_pages_may_oom_exit,
 	TP_PROTO(struct oom_control *oc, unsigned long did_some_progress),
 	TP_ARGS(oc, did_some_progress));
-DECLARE_HOOK(android_vh_adjust_kvmalloc_flags,
-	TP_PROTO(unsigned int order, gfp_t *alloc_flags),
-	TP_ARGS(order, alloc_flags));
 #endif /* _TRACE_HOOK_MM_H */
 
 /* This part must be outside protection */

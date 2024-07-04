@@ -74,6 +74,8 @@ struct gdsc {
 	struct regmap           *domain_addr;
 	struct regmap           *hw_ctrl;
 	struct regmap           **sw_resets;
+	struct regmap           *acd_reset;
+	struct regmap           *acd_misc_reset;
 	struct collapse_vote	collapse_vote;
 	struct clk		**clocks;
 	struct mbox_client	mbox_client;
@@ -333,17 +335,30 @@ static int gdsc_enable(struct regulator_dev *rdev)
 				regmap_set_bits(sc->sw_resets[i], REG_OFFSET,
 						BCR_BLK_ARES_BIT);
 
+			if (sc->acd_reset){
+				regmap_set_bits(sc->acd_reset, REG_OFFSET, BCR_BLK_ARES_BIT);
+			}
+			if (sc->acd_misc_reset){
+				regmap_set_bits(sc->acd_misc_reset, REG_OFFSET, BCR_BLK_ARES_BIT);
+			}
 			/*
-			 * BLK_ARES should be kept asserted for 1us before
-			 * being de-asserted.
-			 */
+			* BLK_ARES should be kept asserted for at least 100 us
+			* before being de-asserted.
+			* This is necessary as in HW there are 3 demet cells
+			* on sleep clk to synchronize the BLK_ARES.
+			*/
 			gdsc_mb(sc);
-			udelay(1);
+			udelay(100);
 
 			for (i = 0; i < sc->sw_reset_count; i++)
-				regmap_clear_bits(sc->sw_resets[i], REG_OFFSET,
-						  BCR_BLK_ARES_BIT);
+				regmap_clear_bits(sc->sw_resets[i], REG_OFFSET, BCR_BLK_ARES_BIT);
 
+			if (sc->acd_reset){
+				regmap_clear_bits(sc->acd_reset, REG_OFFSET, BCR_BLK_ARES_BIT);
+			}
+			if (sc->acd_misc_reset){
+				regmap_clear_bits(sc->acd_misc_reset, REG_OFFSET, BCR_BLK_ARES_BIT);
+			}
 			/* Make sure de-assert goes through before continuing */
 			gdsc_mb(sc);
 		}
@@ -482,6 +497,12 @@ static int gdsc_disable(struct regulator_dev *rdev)
 		 * handle this during system sleep.
 		 */
 	} else if (sc->toggle_logic) {
+		if (sc->sw_reset_count) {
+			if (sc->acd_misc_reset)
+				regmap_set_bits(sc->acd_misc_reset, REG_OFFSET,
+					BCR_BLK_ARES_BIT);
+		}
+
 		/* Disable gdsc */
 		if (sc->collapse_count) {
 			for (i = 0; i < sc->collapse_count; i++)
@@ -784,6 +805,20 @@ static int gdsc_parse_dt_data(struct gdsc *sc, struct device *dev,
 			if (IS_ERR(sc->sw_resets[i]))
 				return PTR_ERR(sc->sw_resets[i]);
 		}
+	}
+
+	if (of_find_property(dev->of_node, "acd-reset", NULL)) {
+		sc->acd_reset = syscon_regmap_lookup_by_phandle(dev->of_node,
+						"acd-reset");
+		if (IS_ERR(sc->acd_reset))
+			return PTR_ERR(sc->acd_reset);
+	}
+
+	if (of_find_property(dev->of_node, "acd-misc-reset", NULL)) {
+		sc->acd_misc_reset = syscon_regmap_lookup_by_phandle(dev->of_node,
+							"acd-misc-reset");
+		if (IS_ERR(sc->acd_misc_reset))
+			return PTR_ERR(sc->acd_misc_reset);
 	}
 
 	if (of_find_property(dev->of_node, "hw-ctrl-addr", NULL)) {
