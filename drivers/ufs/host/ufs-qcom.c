@@ -6451,6 +6451,18 @@ static void ufs_qcom_hook_compl_command(void *param, struct ufs_hba *hba,
 		struct request *rq = scsi_cmd_to_rq(lrbp->cmd);
 		int sz = rq ? blk_rq_sectors(rq) : 0;
 
+		/* if cost more than 100ms, print out in dmesg for IO analyze */
+		if ((lrbp->cmd->cmnd[0] == READ_10 || lrbp->cmd->cmnd[0] == WRITE_10 ||
+		     lrbp->cmd->cmnd[0] == READ_16 || lrbp->cmd->cmnd[0] == WRITE_16) &&
+		    ktime_us_delta(lrbp->compl_time_stamp, lrbp->issue_time_stamp) > 100000) {
+			printk_ratelimited(
+				KERN_WARNING "%s cost more than 100ms, it's %dms\n",
+				lrbp->cmd->cmnd[0] == READ_10 ? "READ_10" :
+				lrbp->cmd->cmnd[0] == WRITE_10 ? "WRITE_10" :
+				lrbp->cmd->cmnd[0] == READ_16 ? "READ_16" : "WRITE_16",
+				ktime_us_delta(lrbp->compl_time_stamp, lrbp->issue_time_stamp) / 1000);
+		}
+
 		if (!is_mcq_enabled(hba)) {
 			ufs_qcom_log_str(host, ">,%x,%d,%x,%d\n",
 							lrbp->cmd->cmnd[0],

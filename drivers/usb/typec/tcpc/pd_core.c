@@ -689,7 +689,6 @@ uint32_t pd_get_cable_current_limit(struct pd_port *pd_port)
 
 bool pd_is_cable_communication_available(struct pd_port *pd_port)
 {
-
 #ifdef CONFIG_USB_PD_REV30
 	if (pd_port->power_role == PD_ROLE_SINK)
 		return false;

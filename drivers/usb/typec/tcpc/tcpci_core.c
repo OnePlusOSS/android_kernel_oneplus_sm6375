@@ -440,6 +440,10 @@ int tcpc_device_irq_enable(struct tcpc_device *tcpc)
 
 #ifdef OPLUS_FEATURE_CHG_BASIC
 /**
+  *mtk patch from ALPS08570528
+  *The baseline this cr has been merged into
+  *kernel-4.19 (MT6765 MT6789 MT6833 MT6877 MT6895  MT6983 MT6765)
+  *kernel 5.15 (MT6985 MT6835)
   *after the phone restarts, some adapters cannot recognize PD.
   */
 	schedule_delayed_work(&tcpc->event_init_work, msecs_to_jiffies(0));

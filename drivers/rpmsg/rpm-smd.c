@@ -6,7 +6,6 @@
 
 #define pr_fmt(fmt) "%s: " fmt, __func__
 
-#include <linux/ipc_logging.h>
 #include <linux/completion.h>
 #include <linux/device.h>
 #include <linux/irq.h>
@@ -33,6 +32,7 @@
 #include <soc/qcom/rpm-smd.h>
 #include <soc/qcom/mpm.h>
 #include <linux/errno.h>
+#include <linux/ipc_logging.h>
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/trace_rpm_smd.h>
