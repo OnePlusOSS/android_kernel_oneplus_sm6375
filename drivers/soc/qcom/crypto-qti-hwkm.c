@@ -501,6 +501,17 @@ int crypto_qti_derive_raw_secret_platform(const struct ice_mmio_data *mmio_data,
 	int err = 0;
 
 #if IS_ENABLED(CONFIG_QTI_HW_KEY_MANAGER_V1)
+	// add for fix factory version can not bootup while enable fbe begin
+	// for mmio_data_ref->ice_hwkm_mmio,ice_base_mmio is null pointer
+	if (!qti_hwkm_init_done) {
+		err = qti_hwkm_init(mmio_data);
+		if (err) {
+			pr_err("%s: Error with HWKM init %d\n", __func__, err);
+			return -EINVAL;
+		}
+		qti_hwkm_init_done = true;
+	}
+	// add for fix factory version can not bootup while enable fbe end
 	return crypto_qti_derive_raw_secret_platform_v1(wrapped_key,
 		wrapped_key_size, secret, secret_size);
 #endif

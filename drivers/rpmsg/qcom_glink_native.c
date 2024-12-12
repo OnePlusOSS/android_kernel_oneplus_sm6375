@@ -316,6 +316,10 @@ static struct glink_channel *qcom_glink_alloc_channel(struct qcom_glink *glink,
 
 	channel->glink = glink;
 	channel->name = kstrdup(name, GFP_KERNEL);
+	if (!channel->name) {
+		kfree(channel);
+		return ERR_PTR(-ENOMEM);
+	}
 
 	init_completion(&channel->open_req);
 	init_completion(&channel->open_ack);
@@ -1513,7 +1517,8 @@ static int qcom_glink_native_rx(struct qcom_glink *glink, int iterations)
 	spin_lock_irqsave(&glink->irq_lock, flags);
 	if (glink->irq_running) {
 		spin_unlock_irqrestore(&glink->irq_lock, flags);
-		return 0;
+		GLINK_INFO(glink->ilc, "re-entry while irq is running %d \n",iterations);
+		return IRQ_WAKE_THREAD;
 	}
 	glink->irq_running = true;
 	spin_unlock_irqrestore(&glink->irq_lock, flags);
@@ -1601,7 +1606,7 @@ static irqreturn_t qcom_glink_native_intr(int irq, void *data)
 	struct qcom_glink *glink = data;
 	int ret;
 
-	ret = qcom_glink_native_rx(glink, 10);
+	ret = qcom_glink_native_rx(glink, 15);
 
 	return (ret) ? IRQ_WAKE_THREAD : IRQ_HANDLED;
 }

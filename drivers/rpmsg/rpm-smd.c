@@ -31,6 +31,8 @@
 #include <linux/types.h>
 #include <soc/qcom/rpm-smd.h>
 #include <soc/qcom/mpm.h>
+#include <linux/errno.h>
+#include <linux/ipc_logging.h>
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/trace_rpm_smd.h>
@@ -79,6 +81,10 @@
 	val;					\
 })
 #endif
+
+static void *rpm_smd_ctxt;
+#define RPM_SMD_INFO(ctx, x, ...)               \
+	ipc_log_string(ctx, x, ##__VA_ARGS__)
 
 /* Debug Definitions */
 enum {
@@ -1256,6 +1262,7 @@ static int msm_rpm_send_data(struct msm_rpm_request *cdata,
 	msm_rpm_add_wait_list(msg_id, noack);
 
 	ret = rpmsg_send(rpm->rpm_channel, &cdata->buf[0], msg_size);
+	RPM_SMD_INFO(rpm_smd_ctxt,"pid %d sending data %x \n",current->pid ,msg_id);
 
 	if (!ret) {
 		for (i = 0; (i < cdata->write_idx); i++)
@@ -1332,10 +1339,16 @@ int msm_rpm_wait_for_ack(uint32_t msg_id)
 	if (!elem)
 		return rc;
 
-	wait_for_completion(&elem->ack);
-	trace_rpm_smd_ack_recvd(0, msg_id, 0xDEADFEED);
+	if(!wait_for_completion_timeout(&elem->ack,msecs_to_jiffies(20000))) {
+		pr_err("wait msg %d rpm ack timeout \n",msg_id);
+		RPM_SMD_INFO(rpm_smd_ctxt,"wait msg %d rpm ack timeout \n",msg_id);
+		rc = -ETIME;
+	}
+	else {
+		trace_rpm_smd_ack_recvd(0, msg_id, 0xDEADFEED);
+		rc = elem->errno;
+	}
 
-	rc = elem->errno;
 	msm_rpm_free_list_entry(elem);
 
 	return rc;
@@ -1457,10 +1470,24 @@ static int msm_rpm_enter_sleep(void)
 	if (!ret) {
 		ret = msm_rpm_flush_requests();
 		if (ret)
+		{
+			RPM_SMD_INFO(rpm_smd_ctxt," %s msm_rpm_fluash_request failed  \n",__func__);
 			smd_mask_receive_interrupt(false, NULL);
+		}
 	}
 
-	return msm_mpm_enter_sleep(&cpumask);
+	ret = msm_mpm_enter_sleep(&cpumask);
+	if (!ret)
+	{
+		RPM_SMD_INFO(rpm_smd_ctxt,"msm_mpm_enter_sleep sucess \n");
+		return ret;
+	}
+	else
+	{
+		RPM_SMD_INFO(rpm_smd_ctxt,"msm_mpm_enter_sleep failed \n");
+		return ret;
+	}
+
 }
 
 /**
@@ -1475,7 +1502,10 @@ static void msm_rpm_exit_sleep(void)
 	if (probe_status)
 		return;
 
-	smd_mask_receive_interrupt(false, NULL);
+	if (smd_mask_receive_interrupt(false, NULL))
+	{
+		RPM_SMD_INFO(rpm_smd_ctxt,"failed to unmask irq when exit sleep \n");        
+	}
 }
 
 static int rpm_smd_power_cb(struct notifier_block *nb, unsigned long action, void *d)
@@ -1483,12 +1513,18 @@ static int rpm_smd_power_cb(struct notifier_block *nb, unsigned long action, voi
 	switch (action) {
 	case GENPD_NOTIFY_OFF:
 		if (msm_rpm_waiting_for_ack())
+		{
+			 RPM_SMD_INFO(rpm_smd_ctxt,"No pending ack in  %s  \n",__func__);
 			return NOTIFY_BAD;
+		}
 		if (msm_rpm_enter_sleep())
+		{
+			RPM_SMD_INFO(rpm_smd_ctxt,"msm_rpm_enter_sleep failed  %s  \n",__func__); 
 			return NOTIFY_BAD;
-
+		}
 		break;
 	case GENPD_NOTIFY_ON:
+		RPM_SMD_INFO(rpm_smd_ctxt,"Notify on  %s  \n",__func__);
 		msm_rpm_exit_sleep();
 		break;
 	}
@@ -1502,6 +1538,7 @@ static int rpm_smd_pm_notifier(struct notifier_block *nb, unsigned long event, v
 
 	if (event == PM_SUSPEND_PREPARE) {
 		ret = msm_rpm_flush_requests();
+		RPM_SMD_INFO(rpm_smd_ctxt," %s failed in flush request \n",__func__);
 		pr_debug("ret = %d\n", ret);
 	}
 
@@ -1544,7 +1581,7 @@ static int qcom_smd_rpm_callback(struct rpmsg_device *rpdev, void *ptr,
 		spin_unlock_irqrestore(&rx_notify_lock, flags);
 		return 0;
 	}
-
+	RPM_SMD_INFO(rpm_smd_ctxt,"%s call back receive  msg id %x  \n",__func__,msg_id);
 	msm_rpm_process_ack(msg_id, errno);
 	spin_unlock_irqrestore(&rx_notify_lock, flags);
 
@@ -1634,7 +1671,7 @@ static int qcom_smd_rpm_probe(struct rpmsg_device *rpdev)
 	mutex_init(&rpm->lock);
 	init_completion(&rpm->ack);
 	probe_status = 0;
-
+	rpm_smd_ctxt = ipc_log_context_create(1,"rpm_smd", 0x10000);
 fail:
 	return probe_status;
 }

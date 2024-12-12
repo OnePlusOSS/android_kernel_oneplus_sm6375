@@ -67,7 +67,37 @@ static u64 bcm_div(u64 num, u32 base)
 	return num;
 }
 
-static void bcm_aggregate(struct qcom_icc_bcm *bcm, bool init)
+/* BCMs with enable_mask use one-hot-encoding for on/off signaling */
+static void bcm_aggregate_mask(struct qcom_icc_bcm *bcm)
+{
+	struct qcom_icc_node *node;
+	int bucket, i;
+
+	for (bucket = 0; bucket < QCOM_ICC_NUM_BUCKETS; bucket++) {
+		bcm->vote_x[bucket] = 0;
+		bcm->vote_y[bucket] = 0;
+
+		for (i = 0; i < bcm->num_nodes; i++) {
+			node = bcm->nodes[i];
+
+			/* If any vote in this bucket exists, keep the BCM enabled */
+			if (node->sum_avg[bucket] || node->max_peak[bucket]) {
+				bcm->vote_x[bucket] = 0;
+				bcm->vote_y[bucket] = bcm->enable_mask;
+				break;
+			}
+		}
+	}
+
+	if (bcm->keepalive) {
+		bcm->vote_x[QCOM_ICC_BUCKET_AMC] = bcm->enable_mask;
+		bcm->vote_x[QCOM_ICC_BUCKET_WAKE] = bcm->enable_mask;
+		bcm->vote_y[QCOM_ICC_BUCKET_AMC] = bcm->enable_mask;
+		bcm->vote_y[QCOM_ICC_BUCKET_WAKE] = bcm->enable_mask;
+	}
+}
+
+static void bcm_aggregate(struct qcom_icc_bcm *bcm)
 {
 	struct qcom_icc_node *node;
 	size_t i, bucket;
@@ -336,13 +366,13 @@ static int commit_rpmh(struct bcm_voter *voter)
 		 */
 		list_sort(NULL, &voter->commit_list, cmp_vcd);
 
-		/*
-		 * Construct the command list based on a pre ordered list of BCMs
-		 * based on VCD.
-		 */
-		tcs_list_gen(voter, QCOM_ICC_BUCKET_AMC, cmds, commit_idx);
-		if (!commit_idx[0])
-			goto out;
+	mutex_lock(&voter->lock);
+	list_for_each_entry(bcm, &voter->commit_list, list) {
+		if (bcm->enable_mask)
+			bcm_aggregate_mask(bcm);
+		else
+			bcm_aggregate(bcm);
+	}
 
 		qcom_icc_bcm_log(voter, RPMH_ACTIVE_ONLY_STATE, cmds, commit_idx);
 		ret = rpmh_write_batch(voter->dev, RPMH_ACTIVE_ONLY_STATE,

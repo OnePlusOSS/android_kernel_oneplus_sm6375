@@ -51,7 +51,6 @@
 #include <linux/sched/isolation.h>
 #include <linux/nmi.h>
 #include <linux/kvm_para.h>
-
 #include "workqueue_internal.h"
 
 #include <trace/hooks/wqlockup.h>
@@ -384,6 +383,10 @@ static void show_one_worker_pool(struct worker_pool *pool);
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/workqueue.h>
+#ifdef CONFIG_BLOCKIO_UX_OPT
+void dm_bufio_shrink_scan_bypass(unsigned long task, bool *process);
+#define VIRTUAL_KWORKER_NICE (-1000)
+#endif
 
 EXPORT_TRACEPOINT_SYMBOL_GPL(workqueue_execute_start);
 EXPORT_TRACEPOINT_SYMBOL_GPL(workqueue_execute_end);
@@ -1781,7 +1784,7 @@ bool queue_rcu_work(struct workqueue_struct *wq, struct rcu_work *rwork)
 
 	if (!test_and_set_bit(WORK_STRUCT_PENDING_BIT, work_data_bits(work))) {
 		rwork->wq = wq;
-		call_rcu(&rwork->rcu, rcu_work_rcufn);
+		call_rcu_hurry(&rwork->rcu, rcu_work_rcufn);
 		return true;
 	}
 
@@ -1938,7 +1941,9 @@ static struct worker *create_worker(struct worker_pool *pool)
 	struct worker *worker;
 	int id;
 	char id_buf[16];
-
+#ifdef CONFIG_BLOCKIO_UX_OPT
+	bool set_ux = true;
+#endif
 	/* ID is needed to determine kthread name */
 	id = ida_alloc(&pool->worker_ida, GFP_KERNEL);
 	if (id < 0)
@@ -1950,18 +1955,33 @@ static struct worker *create_worker(struct worker_pool *pool)
 
 	worker->id = id;
 
+#ifdef CONFIG_BLOCKIO_UX_OPT
+	if (pool->cpu >= 0)
+		snprintf(id_buf, sizeof(id_buf), "%d:%d%s", pool->cpu, id,
+			(pool->attrs->nice == -1000) ? "X" : pool->attrs->nice < 0  ? "H" : "");
+	else
+		snprintf(id_buf, sizeof(id_buf), "%s%d:%d", (pool->attrs->nice == -1000) ? "X" : "u", pool->id, id);
+#else
 	if (pool->cpu >= 0)
 		snprintf(id_buf, sizeof(id_buf), "%d:%d%s", pool->cpu, id,
 			 pool->attrs->nice < 0  ? "H" : "");
 	else
 		snprintf(id_buf, sizeof(id_buf), "u%d:%d", pool->id, id);
-
+#endif
 	worker->task = kthread_create_on_node(worker_thread, worker, pool->node,
 					      "kworker/%s", id_buf);
 	if (IS_ERR(worker->task))
 		goto fail;
-
+#ifdef CONFIG_BLOCKIO_UX_OPT
+	if (pool->attrs->nice == VIRTUAL_KWORKER_NICE) {
+		dm_bufio_shrink_scan_bypass(
+				(unsigned long)worker->task, &set_ux);
+		set_user_nice(worker->task, MIN_NICE);
+	} else
+		set_user_nice(worker->task, pool->attrs->nice);
+#else
 	set_user_nice(worker->task, pool->attrs->nice);
+#endif
 	kthread_bind_mask(worker->task, pool->attrs->cpumask);
 
 	/* successful, attach the worker to the pool */
@@ -4001,6 +4021,11 @@ apply_wqattrs_prepare(struct workqueue_struct *wq,
 	 * the default pwq covering whole @attrs->cpumask.  Always create
 	 * it even if we don't use it immediately.
 	 */
+
+#ifdef CONFIG_BLOCKIO_UX_OPT
+	if (wq->flags & WQ_UX)
+		new_attrs->nice = VIRTUAL_KWORKER_NICE;
+#endif
 	ctx->dfl_pwq = alloc_unbound_pwq(wq, new_attrs);
 	if (!ctx->dfl_pwq)
 		goto out_free;
@@ -5363,9 +5388,13 @@ static int workqueue_apply_unbound_cpumask(const cpumask_var_t unbound_cpumask)
 	list_for_each_entry(wq, &workqueues, list) {
 		if (!(wq->flags & WQ_UNBOUND))
 			continue;
+
 		/* creating multiple pwqs breaks ordering guarantee */
-		if (wq->flags & __WQ_ORDERED)
-			continue;
+		if (!list_empty(&wq->pwqs)) {
+			if (wq->flags & __WQ_ORDERED_EXPLICIT)
+				continue;
+			wq->flags &= ~__WQ_ORDERED;
+		}
 
 		ctx = apply_wqattrs_prepare(wq, wq->unbound_attrs, unbound_cpumask);
 		if (!ctx) {

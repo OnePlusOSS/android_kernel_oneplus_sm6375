@@ -1700,17 +1700,38 @@ static void shrink_work(struct work_struct *w)
 	__scan(c);
 	dm_bufio_unlock(c);
 }
+#ifdef CONFIG_BLOCKIO_UX_OPT
+#include <linux/mm.h>
+unsigned long shrink_dmbufio_count = 0;
+static bool dm_bufio_shrink_scan_skip(void)
+{
+	long available;
 
-static unsigned long dm_bufio_shrink_scan(struct shrinker *shrink, struct shrink_control *sc)
+	available = si_mem_available();
+
+	if (available < (totalram_pages() / 10)) {
+		unsigned long dm_bufio_allocated_pages =
+			dm_bufio_current_allocated >> PAGE_SHIFT;
+
+		if (dm_bufio_allocated_pages > (available >> 2)) {
+			shrink_dmbufio_count++;
+			return false;
+		}
+	}
+
+	return true;
+}
+#endif
+
+static unsigned long
+dm_bufio_shrink_scan(struct shrinker *shrink, struct shrink_control *sc)
 {
 	struct dm_bufio_client *c;
-	bool bypass = false;
 
-	trace_android_vh_dm_bufio_shrink_scan_bypass(
-			dm_bufio_current_allocated,
-			&bypass);
-	if (bypass)
+#ifdef CONFIG_BLOCKIO_UX_OPT
+	if (dm_bufio_shrink_scan_skip())
 		return 0;
+#endif
 
 	c = container_of(shrink, struct dm_bufio_client, shrinker);
 	atomic_long_add(sc->nr_to_scan, &c->need_shrink);
@@ -1922,6 +1943,13 @@ void dm_bufio_client_destroy(struct dm_bufio_client *c)
 	kfree(c);
 }
 EXPORT_SYMBOL_GPL(dm_bufio_client_destroy);
+
+void dm_bufio_client_reset(struct dm_bufio_client *c)
+{
+	drop_buffers(c);
+	flush_work(&c->shrink_work);
+}
+EXPORT_SYMBOL_GPL(dm_bufio_client_reset);
 
 void dm_bufio_set_sector_offset(struct dm_bufio_client *c, sector_t start)
 {

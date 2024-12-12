@@ -23,6 +23,7 @@
 #include <linux/init.h>
 #include <linux/file.h>
 #include <linux/fs.h>
+#include <linux/pgsize_migration.h>
 #include <linux/personality.h>
 #include <linux/security.h>
 #include <linux/hugetlb.h>
@@ -530,6 +531,7 @@ inline int vma_expand(struct ma_state *mas, struct vm_area_struct *vma,
 	struct anon_vma *anon_vma = vma->anon_vma;
 	struct file *file = vma->vm_file;
 	bool remove_next = false;
+	struct vm_area_struct *anon_dup = NULL;
 
 	vma_start_write(vma);
 	if (next && (vma != next) && (end == next->vm_end)) {
@@ -544,6 +546,8 @@ inline int vma_expand(struct ma_state *mas, struct vm_area_struct *vma,
 			error = anon_vma_clone(vma, next);
 			if (error)
 				return error;
+
+			anon_dup = vma;
 		}
 	}
 
@@ -556,7 +560,11 @@ inline int vma_expand(struct ma_state *mas, struct vm_area_struct *vma,
 	if (mas_preallocate(mas, vma, GFP_KERNEL))
 		goto nomem;
 
+#ifdef CONFIG_CONT_PTE_HUGEPAGE
+	vma_adjust_cont_pte_trans_huge(vma, start, end, 0);
+#else
 	vma_adjust_trans_huge(vma, start, end, 0);
+#endif
 
 	if (file) {
 		mapping = file->f_mapping;
@@ -619,6 +627,9 @@ inline int vma_expand(struct ma_state *mas, struct vm_area_struct *vma,
 	return 0;
 
 nomem:
+	if (anon_dup)
+		unlink_anon_vmas(anon_dup);
+
 	return -ENOMEM;
 }
 
@@ -652,6 +663,7 @@ int __vma_adjust(struct vm_area_struct *vma, unsigned long start,
 	int remove_next = 0;
 	MA_STATE(mas, &mm->mm_mt, start, end - 1);
 	struct vm_area_struct *exporter = NULL, *importer = NULL;
+	struct vm_area_struct *anon_dup = NULL;
 
 	vma_start_write(vma);
 	if (next)
@@ -739,6 +751,8 @@ int __vma_adjust(struct vm_area_struct *vma, unsigned long start,
 			error = anon_vma_clone(importer, exporter);
 			if (error)
 				return error;
+
+			anon_dup = importer;
 		}
 	}
 
@@ -751,10 +765,19 @@ int __vma_adjust(struct vm_area_struct *vma, unsigned long start,
 	}
 
 
-	if (mas_preallocate(&mas, vma, GFP_KERNEL))
-		return -ENOMEM;
+	if (mas_preallocate(&mas, vma, GFP_KERNEL)) {
+		if (anon_dup)
+			unlink_anon_vmas(anon_dup);
 
+		return -ENOMEM;
+	}
+
+#ifdef CONFIG_CONT_PTE_HUGEPAGE
+	vma_adjust_cont_pte_trans_huge(orig_vma, start, end, adjust_next);
+#else
 	vma_adjust_trans_huge(orig_vma, start, end, adjust_next);
+#endif
+
 	if (file) {
 		mapping = file->f_mapping;
 		root = &mapping->i_mmap;
@@ -926,6 +949,8 @@ static inline int is_mergeable_vma(struct vm_area_struct *vma,
 	if (!is_mergeable_vm_userfaultfd_ctx(vma, vm_userfaultfd_ctx))
 		return 0;
 	if (!anon_vma_name_eq(anon_vma_name(vma), anon_name))
+		return 0;
+	if (!is_mergable_pad_vma(vma, vm_flags))
 		return 0;
 	return 1;
 }
@@ -1761,7 +1786,11 @@ generic_get_unmapped_area(struct file *filp, unsigned long addr,
 	info.length = len;
 	info.low_limit = mm->mmap_base;
 	info.high_limit = mmap_end;
+#ifndef CONFIG_CONT_PTE_HUGEPAGE
 	info.align_mask = 0;
+#else
+	handle_chp_get_unmapped_area(&info, filp, pgoff);
+#endif
 	info.align_offset = 0;
 	return vm_unmapped_area(&info);
 }
@@ -1811,7 +1840,11 @@ generic_get_unmapped_area_topdown(struct file *filp, unsigned long addr,
 	info.length = len;
 	info.low_limit = max(PAGE_SIZE, mmap_min_addr);
 	info.high_limit = arch_get_mmap_base(addr, mm->mmap_base);
+#ifndef CONFIG_CONT_PTE_HUGEPAGE
 	info.align_mask = 0;
+#else
+	handle_chp_get_unmapped_area(&info, filp, pgoff);
+#endif
 	info.align_offset = 0;
 	addr = vm_unmapped_area(&info);
 
@@ -2400,6 +2433,14 @@ int __split_vma(struct mm_struct *mm, struct vm_area_struct *vma,
 	int err;
 	validate_mm_mt(mm);
 
+#ifdef CONFIG_CONT_PTE_HUGEPAGE
+#if CONFIG_CHP_ABNORMAL_PTES_DEBUG
+	if (vma_is_chp_anonymous(vma) && !IS_ALIGNED(addr, HPAGE_CONT_PTE_SIZE)) {
+		commit_chp_abnormal_ptes_record(DOUBLE_MAP_REASON_SPLIT_VMA);
+	}
+#endif
+#endif
+
 	vma_start_write(vma);
 	if (vma->vm_ops && vma->vm_ops->may_split) {
 		err = vma->vm_ops->may_split(vma, addr);
@@ -2442,8 +2483,10 @@ int __split_vma(struct mm_struct *mm, struct vm_area_struct *vma,
 		err = vma_adjust(vma, vma->vm_start, addr, vma->vm_pgoff, new);
 
 	/* Success. */
-	if (!err)
+	if (!err) {
+		split_pad_vma(vma, new, addr, new_below);
 		return 0;
+	}
 
 	/* Avoid vm accounting in close() operation */
 	new->vm_start = new->vm_end;
@@ -3184,7 +3227,12 @@ static int do_brk_flags(struct ma_state *mas, struct vm_area_struct *vma,
 
 		/* Set flags first to implicitly lock the VMA before updates */
 		vm_flags_set(vma, VM_SOFTDIRTY);
+
+#ifdef CONFIG_CONT_PTE_HUGEPAGE
+		vma_adjust_cont_pte_trans_huge(vma, vma->vm_start, addr + len, 0);
+#else
 		vma_adjust_trans_huge(vma, vma->vm_start, addr + len, 0);
+#endif
 		if (vma->anon_vma) {
 			anon_vma_lock_write(vma->anon_vma);
 			anon_vma_interval_tree_pre_update_vma(vma);
@@ -3250,12 +3298,12 @@ int vm_brk_flags(unsigned long addr, unsigned long request, unsigned long flags)
 	if (!len)
 		return 0;
 
-	if (mmap_write_lock_killable(mm))
-		return -EINTR;
-
 	/* Until we need other flags, refuse anything except VM_EXEC. */
 	if ((flags & (~VM_EXEC)) != 0)
 		return -EINVAL;
+
+	if (mmap_write_lock_killable(mm))
+		return -EINTR;
 
 	ret = check_brk_limits(addr, len);
 	if (ret)
@@ -3303,10 +3351,11 @@ void exit_mmap(struct mm_struct *mm)
 	arch_exit_mmap(mm);
 
 	vma = mas_find(&mas, ULONG_MAX);
-	if (!vma) {
+	if (!vma || unlikely(xa_is_zero(vma))) {
 		/* Can happen if dup_mmap() received an OOM */
 		mmap_read_unlock(mm);
-		return;
+		mmap_write_lock(mm);
+		goto destroy;
 	}
 
 	lru_add_drain();
@@ -3339,11 +3388,13 @@ void exit_mmap(struct mm_struct *mm)
 		remove_vma(vma, true);
 		count++;
 		cond_resched();
-	} while ((vma = mas_find(&mas, ULONG_MAX)) != NULL);
+		vma = mas_find(&mas, ULONG_MAX);
+	} while (vma && likely(!xa_is_zero(vma)));
 
 	BUG_ON(count != mm->map_count);
 
 	trace_exit_mmap(mm);
+destroy:
 	__mt_destroy(&mm->mm_mt);
 	mmap_write_unlock(mm);
 	vm_unacct_memory(nr_accounted);

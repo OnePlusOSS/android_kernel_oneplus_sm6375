@@ -274,6 +274,7 @@ def define_pineapple():
         "net/wireless/cfg80211.ko",
         "sound/soc/codecs/snd-soc-hdmi-codec.ko",
         "sound/usb/snd-usb-audio-qmi.ko",
+        "mm/mm_osvelte/oplus_bsp_mm_osvelte.ko",
     ]
 
     _pineapple_consolidate_in_tree_modules = _pineapple_in_tree_modules + [

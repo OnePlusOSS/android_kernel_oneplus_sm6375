@@ -34,3 +34,8 @@ ccflags-$(CONFIG_DEBUG_DRIVER) := -DDEBUG
 # define_trace.h needs to know how to find our header
 CFLAGS_trace.o		:= -I$(src)
 obj-$(CONFIG_TRACING)	+= trace.o
+
+#ifdef OPLUS_FEATURE_TP_BASIC
+obj-$(CONFIG_OPLUS_FW_UPDATE)   += kernelFwUpdate/
+obj-$(CONFIG_TOUCHPANEL_NOTIFY) += touchpanel_notify/
+#endif /* OPLUS_FEATURE_TP_BASIC */

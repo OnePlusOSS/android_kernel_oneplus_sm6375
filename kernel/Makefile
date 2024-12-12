@@ -10,7 +10,7 @@ obj-y     = fork.o exec_domain.o panic.o \
 	    extable.o params.o \
 	    kthread.o sys_ni.o nsproxy.o \
 	    notifier.o ksysfs.o cred.o reboot.o \
-	    async.o range.o smpboot.o ucount.o regset.o
+	    async.o range.o smpboot.o ucount.o regset.o delayacct.o
 
 obj-$(CONFIG_USERMODE_DRIVER) += usermode_driver.o
 obj-$(CONFIG_MODULES) += kmod.o
@@ -94,7 +94,6 @@ obj-$(CONFIG_HARDLOCKUP_DETECTOR_PERF) += watchdog_hld.o
 obj-$(CONFIG_SECCOMP) += seccomp.o
 obj-$(CONFIG_RELAY) += relay.o
 obj-$(CONFIG_SYSCTL) += utsname_sysctl.o
-obj-$(CONFIG_TASK_DELAY_ACCT) += delayacct.o
 obj-$(CONFIG_TASKSTATS) += taskstats.o tsacct.o
 obj-$(CONFIG_MSM_SYSSTATS) += msm_sysstats.o
 obj-$(CONFIG_TRACEPOINTS) += tracepoint.o
@@ -157,3 +156,20 @@ $(obj)/kheaders_data.tar.xz: FORCE
 	$(call cmd,genikh)
 
 clean-files := kheaders_data.tar.xz kheaders.md5
+#ifdef OPLUS_FEATURE_PERFORMANCE_SCHED
+obj-$(CONFIG_OPLUS_FEATURE_PERFORMANCE_SCHED) += oplus_cpu/sched/
+#endif /* OPLUS_FEATURE_PERFORMANCE_SCHED */
+
+#ifdef OPLUS_FEATURE_OMRG
+obj-$(CONFIG_OPLUS_OMRG) += oplus_cpu/oplus_omrg/
+#endif /* OPLUS_FEATURE_OMRG */
+
+#ifdef OPLUS_FEATURE_GKI_CPUFREQ_BOUNCING
+obj-$(CONFIG_OPLUS_FEATURE_GKI_CPUFREQ_BOUNCING) += oplus_cpu/cpufreq_bouncing/
+#endif /* OPLUS_FEATURE_GKI_CPUFREQ_BOUNCING */
+
+obj-$(CONFIG_OPLUS_CPU_FREQ_GOV_UAG) += oplus_cpu/uad/
+
+#ifdef OPLUS_FEATURE_OCH
+obj-$(CONFIG_OPLUS_FEATURE_OCH) += oplus_cpu/cpufreq_health/
+#endif /* OPLUS_FEATURE_OCH */

@@ -123,7 +123,6 @@ struct qcom_icc_node {
  * @vote_y: aggregated threshold values, represents peak_bw when @type is bw bcm
  * @vote_scale: scaling factor for vote_x and vote_y
  * @enable_mask: optional mask to send as vote instead of vote_x/vote_y
- * @perf_mode_mask: mask to OR with enable_mask when QCOM_ICC_TAG_PERF_MODE is set
  * @dirty: flag used to indicate whether the bcm needs to be committed
  * @keepalive: flag used to indicate whether a keepalive is required
  * @keepalive_early: keepalive only prior to sync-state
@@ -145,7 +144,6 @@ struct qcom_icc_bcm {
 	u64 vote_y[QCOM_ICC_NUM_BUCKETS];
 	u64 vote_scale;
 	u32 enable_mask;
-	u32 perf_mode_mask;
 	bool dirty;
 	bool keepalive;
 	bool keepalive_early;

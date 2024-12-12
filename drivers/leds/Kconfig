@@ -97,6 +97,7 @@ config LEDS_ARIEL
 config LEDS_AW2013
 	tristate "LED support for Awinic AW2013"
 	depends on LEDS_CLASS && I2C && OF
+	select REGMAP_I2C
 	help
 	  This option enables support for the AW2013 3-channel
 	  LED driver.
@@ -937,4 +938,5 @@ source "drivers/leds/trigger/Kconfig"
 comment "Simple LED drivers"
 source "drivers/leds/simple/Kconfig"
 
+source "drivers/leds/aw210xx/Kconfig"
 endif # NEW_LEDS

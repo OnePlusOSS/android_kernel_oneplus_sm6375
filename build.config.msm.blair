@@ -19,6 +19,11 @@ SYSTEM_DLKM_MODULES_LIST=${ROOT_DIR}/${KERNEL_DIR}/android/gki_system_dlkm_modul
 SUPER_IMAGE_SIZE=0x10000000
 TRIM_UNUSED_MODULES=1
 BUILD_INIT_BOOT_IMG=1
+
+if [ "${VARIANT}" == "consolidate" ]; then
+	KERNEL_VENDOR_CMDLINE+=' buildvariant=userdebug '
+fi
+
 [ -z "${DT_OVERLAY_SUPPORT}" ] && DT_OVERLAY_SUPPORT=1
 
 if [ "${KERNEL_CMDLINE_CONSOLE_AUTO}" != "0" ]; then

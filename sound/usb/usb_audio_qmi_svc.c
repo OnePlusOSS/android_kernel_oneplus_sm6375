@@ -1428,8 +1428,12 @@ static int enable_audio_stream(struct snd_usb_substream *subs,
 		}
 
 		if (fmt->sync_ep) {
+//#ifdef OPLUS_FEATURE_CHG_BASIC
+			/* CR_3376439 Currently driver is configuring sync_ep incorrectly while opening
+			  the sync_ep. Fix this by setting the sync_ep as true.*/
 			subs->sync_endpoint = snd_usb_endpoint_open(chip,
-					fmt, &params, false, fixed_rate);
+					fmt, &params, true, fixed_rate);
+//#endif
 			if (!subs->sync_endpoint) {
 				uaudio_err("failed to open sync endpoint\n");
 				return -EINVAL;

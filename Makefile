@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0
 VERSION = 6
 PATCHLEVEL = 1
-SUBLEVEL = 43
+SUBLEVEL = 75
 EXTRAVERSION =
 NAME = Curry Ramen
 
@@ -608,6 +608,20 @@ KBUILD_RUSTFLAGS_MODULE := --cfg MODULE
 KBUILD_LDFLAGS_MODULE :=
 KBUILD_LDFLAGS :=
 CLANG_FLAGS :=
+
+#ifdef OPLUS_FEATURE_CHG_BASIC
+KBUILD_CFLAGS +=   -DOPLUS_FEATURE_CHG_BASIC
+KBUILD_CPPFLAGS += -DOPLUS_FEATURE_CHG_BASIC
+CFLAGS_KERNEL +=   -DOPLUS_FEATURE_CHG_BASIC
+CFLAGS_MODULE +=   -DOPLUS_FEATURE_CHG_BASIC
+#endif
+
+# ifdef OPLUS_FEATURE_DISPLAY
+KBUILD_CFLAGS +=   -DOPLUS_FEATURE_DISPLAY
+KBUILD_CPPFLAGS += -DOPLUS_FEATURE_DISPLAY
+CFLAGS_KERNEL +=   -DOPLUS_FEATURE_DISPLAY
+CFLAGS_MODULE +=   -DOPLUS_FEATURE_DISPLAY
+# endif
 
 ifeq ($(KBUILD_CLIPPY),1)
 	RUSTC_OR_CLIPPY_QUIET := CLIPPY
@@ -1411,7 +1425,7 @@ prepare0: archprepare
 # All the preparing..
 prepare: prepare0
 ifdef CONFIG_RUST
-	$(Q)$(CONFIG_SHELL) $(srctree)/scripts/rust_is_available.sh -v
+	$(Q)$(CONFIG_SHELL) $(srctree)/scripts/rust_is_available.sh
 	$(Q)$(MAKE) $(build)=rust
 endif
 
@@ -1913,7 +1927,7 @@ $(DOC_TARGETS):
 # "Is Rust available?" target
 PHONY += rustavailable
 rustavailable:
-	$(Q)$(CONFIG_SHELL) $(srctree)/scripts/rust_is_available.sh -v && echo "Rust is available!"
+	$(Q)$(CONFIG_SHELL) $(srctree)/scripts/rust_is_available.sh && echo "Rust is available!"
 
 # Documentation target
 #
@@ -2037,7 +2051,9 @@ quiet_cmd_depmod = DEPMOD  $(MODLIB)
 
 modules_install:
 	$(Q)$(MAKE) -f $(srctree)/scripts/Makefile.modinst
+ifndef modules_sign_only
 	$(call cmd,depmod)
+endif
 
 else # CONFIG_MODULES
 

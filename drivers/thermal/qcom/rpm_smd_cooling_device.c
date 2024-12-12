@@ -166,8 +166,9 @@ static int rpm_smd_cdev_probe(struct platform_device *pdev)
 	strscpy(rpm_smd_dev->dev_name, np->name, THERMAL_NAME_LENGTH);
 
 	/* Be pro-active and mitigate till we get first vote from TF */
-	rpm_smd_send_request_to_rpm(rpm_smd_dev, RPM_SMD_COLD);
-
+	    ret = rpm_smd_send_request_to_rpm(rpm_smd_dev, RPM_SMD_COLD);
+		if (ret < 0)
+			return ret;
 	rpm_smd_dev->cool_dev = thermal_of_cooling_device_register(
 					np, rpm_smd_dev->dev_name, rpm_smd_dev,
 					&rpm_smd_device_ops);

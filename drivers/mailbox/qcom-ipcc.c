@@ -10,6 +10,8 @@
 #include <linux/mailbox_controller.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
+#include <linux/ipc_logging.h>
+
 
 #include <dt-bindings/mailbox/qcom-ipcc.h>
 
@@ -58,6 +60,13 @@ struct qcom_ipcc {
 	int irq;
 };
 
+#define IPC_LOG_PAGE_CNT		1
+
+static void *ipcc_ipclog;
+
+#define IPCC_INFO(ctx, x, ...)                 \
+	ipc_log_string(ctx, x, ##__VA_ARGS__)
+
 static inline struct qcom_ipcc *to_qcom_ipcc(struct mbox_controller *mbox)
 {
 	return container_of(mbox, struct qcom_ipcc, mbox);
@@ -78,9 +87,16 @@ static irqreturn_t qcom_ipcc_irq_fn(int irq, void *data)
 	for (;;) {
 		hwirq = readl(ipcc->base + IPCC_REG_RECV_ID);
 		if (hwirq == IPCC_NO_PENDING_IRQ)
+		{
+			IPCC_INFO(ipcc_ipclog, "hwirq is be triggered by rece_id is NULL\n");
 			break;
-
+		}
 		virq = irq_find_mapping(ipcc->irq_domain, hwirq);
+		if ( FIELD_GET(IPCC_CLIENT_ID_MASK, hwirq)==0 && FIELD_GET(IPCC_SIGNAL_ID_MASK, hwirq)==0)
+		{
+			IPCC_INFO(ipcc_ipclog, "%s :irq for client_id :%u; signal_id:%u; virq: %d\n",__func__,
+				FIELD_GET(IPCC_CLIENT_ID_MASK, hwirq), FIELD_GET(IPCC_SIGNAL_ID_MASK, hwirq), virq);
+		}
 		writel(hwirq, ipcc->base + IPCC_REG_RECV_SIGNAL_CLEAR);
 		generic_handle_irq(virq);
 	}
@@ -92,7 +108,11 @@ static void qcom_ipcc_mask_irq(struct irq_data *irqd)
 {
 	struct qcom_ipcc *ipcc = irq_data_get_irq_chip_data(irqd);
 	irq_hw_number_t hwirq = irqd_to_hwirq(irqd);
-
+	if ( FIELD_GET(IPCC_CLIENT_ID_MASK, hwirq)==0 && FIELD_GET(IPCC_SIGNAL_ID_MASK, hwirq)==0)
+	{
+		IPCC_INFO(ipcc_ipclog, "%s :mask irq for client_id :%u; signal_id:%u; \n",__func__,
+			FIELD_GET(IPCC_CLIENT_ID_MASK, hwirq), FIELD_GET(IPCC_SIGNAL_ID_MASK, hwirq));
+	}
 	writel(hwirq, ipcc->base + IPCC_REG_RECV_SIGNAL_DISABLE);
 }
 
@@ -100,6 +120,11 @@ static void qcom_ipcc_unmask_irq(struct irq_data *irqd)
 {
 	struct qcom_ipcc *ipcc = irq_data_get_irq_chip_data(irqd);
 	irq_hw_number_t hwirq = irqd_to_hwirq(irqd);
+	if ( FIELD_GET(IPCC_CLIENT_ID_MASK, hwirq)==0 && FIELD_GET(IPCC_SIGNAL_ID_MASK, hwirq)==0)
+	{
+		IPCC_INFO(ipcc_ipclog, "%s :unmask irq for client_id :%u; signal_id:%u; \n",__func__,
+			FIELD_GET(IPCC_CLIENT_ID_MASK, hwirq), FIELD_GET(IPCC_SIGNAL_ID_MASK, hwirq));
+	}
 
 	writel(hwirq, ipcc->base + IPCC_REG_RECV_SIGNAL_ENABLE);
 }
@@ -226,9 +251,9 @@ static int qcom_ipcc_setup_mbox(struct qcom_ipcc *ipcc,
 		for (j = 0; j < i; j++) {
 			ret = of_parse_phandle_with_args(client_dn, "mboxes",
 						"#mbox-cells", j, &curr_ph);
+			of_node_put(curr_ph.np);
 			if (!ret && curr_ph.np == controller_dn)
 				ipcc->num_chans++;
-			of_node_put(curr_ph.np);
 		}
 	}
 
@@ -314,7 +339,7 @@ static int qcom_ipcc_probe(struct platform_device *pdev)
 	}
 
 	platform_set_drvdata(pdev, ipcc);
-
+	ipcc_ipclog = ipc_log_context_create(IPC_LOG_PAGE_CNT, "ipcc", 0x10000);
 	return 0;
 
 err_req_irq:

@@ -230,4 +230,8 @@ config GENERIC_ARCH_NUMA
 	  Enable support for generic NUMA implementation. Currently, RISC-V
 	  and ARM64 use it.
 
+#ifdef OPLUS_FEATURE_TP_BASIC
+source "drivers/base/kernelFwUpdate/Kconfig"
+source "drivers/base/touchpanel_notify/Kconfig"
+#endif /* OPLUS_FEATURE_TP_BASIC */
 endmenu

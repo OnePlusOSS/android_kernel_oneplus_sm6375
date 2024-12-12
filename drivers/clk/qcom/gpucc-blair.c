@@ -217,6 +217,7 @@ static struct clk_rcg2 gpu_cc_gx_gfx3d_clk_src = {
 	.parent_map = gpu_cc_parent_map_1,
 	.freq_tbl = ftbl_gpu_cc_gx_gfx3d_clk_src,
 	.enable_safe_config = true,
+	.flags = FORCE_ENABLE_RCG,
 	.clkr.hw.init = &(const struct clk_init_data){
 		.name = "gpu_cc_gx_gfx3d_clk_src",
 		.parent_data = gpu_cc_parent_data_1,

@@ -1,0 +1,7 @@
+config OPLUS_CAMERA_WL2826C
+	tristate "config oplus camera_wl2826c software"
+	help
+	  Say Y here to support the WL2868C PMIC chip.
+	  This driver controls WL2868C PMIC chip and the voltage
+	  regulators found in Qualcomm Technologies Inc. WL2868C
+	  PMIC.
